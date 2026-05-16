@@ -16,7 +16,8 @@
 		MessageCircle,
 		Columns2,
 		HashIcon,
-		Trash2
+		Trash2,
+		Users
 	} from '$lib/icons';
 	import Avatar from '$lib/Avatar.svelte';
 	import ChatPane from '$lib/ChatPane.svelte';
@@ -69,11 +70,13 @@
 	let mediaAutoload: MediaAutoload = $state('all');
 	let prefsOpen = $state(false);
 	let prefsTab: 'profile' | 'appearance' = $state('appearance');
+	let prefsMobileView: 'menu' | 'detail' = $state('menu');
 	let profileNameInput = $state('');
 	let newRoomName = $state('');
 
-	const MIN_PANE_WIDTH = 400;
+	const MIN_PANE_WIDTH = 256;
 	const PANE_GAP = 12;
+	const MOBILE_MAX_WIDTH = 767;
 	type Pane = { id: string; roomId: string | null };
 
 	function loadInitialPanes(): { panes: Pane[]; focusedId: string } {
@@ -104,12 +107,28 @@
 	let panes: Pane[] = $state(initialPanes.panes);
 	let focusedPaneId: string = $state(initialPanes.focusedId);
 	let paneRowWidth = $state(0);
+	let isMobile = $state(false);
 
 	const focusedPane = $derived(panes.find((p) => p.id === focusedPaneId) ?? panes[0]);
 	const activeRoomId = $derived(focusedPane?.roomId ?? null);
+	const visiblePaneCount = $derived.by(() => {
+		if (isMobile) return 1;
+		if (!paneRowWidth) return panes.length;
+		const fit = Math.floor((paneRowWidth + PANE_GAP) / (MIN_PANE_WIDTH + PANE_GAP));
+		return Math.min(panes.length, Math.max(1, fit));
+	});
+	const visiblePanes = $derived(panes.slice(0, visiblePaneCount));
 	const canSplit = $derived(
-		paneRowWidth >= (panes.length + 1) * MIN_PANE_WIDTH + panes.length * PANE_GAP
+		!isMobile &&
+			paneRowWidth >= (panes.length + 1) * MIN_PANE_WIDTH + panes.length * PANE_GAP
 	);
+
+	$effect(() => {
+		if (!visiblePanes.length) return;
+		if (!visiblePanes.some((p) => p.id === focusedPaneId)) {
+			focusedPaneId = visiblePanes[visiblePanes.length - 1].id;
+		}
+	});
 
 	function focusPaneId(id: string) {
 		focusedPaneId = id;
@@ -456,6 +475,7 @@
 
 	function openPrefs() {
 		profileNameInput = nickname;
+		prefsMobileView = 'menu';
 		prefsOpen = true;
 	}
 
@@ -827,6 +847,8 @@
 	);
 
 	let sidebarTab: 'all' | 'room' = $state('all');
+	let mobileView: 'chats' | 'messages' | 'people' | 'room-users' = $state('chats');
+	let lastNonMessageView: 'chats' | 'people' = $state('chats');
 	let userFilter = $state('');
 
 	const onlineNicknames = $derived(new Set(onlineUsers.map((u) => u.nickname)));
@@ -1100,6 +1122,7 @@
 		panes = panes.map((p) => (p.id === focusedPaneId ? { ...p, roomId } : p));
 		unhideRoom(roomId);
 		markRead(roomId);
+		mobileView = 'messages';
 	}
 
 
@@ -1236,6 +1259,21 @@
 
 
 	onMount(() => {
+		const mq = window.matchMedia(`(max-width: ${MOBILE_MAX_WIDTH}px)`);
+		const syncMobile = () => (isMobile = mq.matches);
+		syncMobile();
+		mq.addEventListener('change', syncMobile);
+
+		const vv = window.visualViewport;
+		const syncAppHeight = () => {
+			const h = vv ? vv.height : window.innerHeight;
+			document.documentElement.style.setProperty('--app-h', `${h}px`);
+		};
+		syncAppHeight();
+		vv?.addEventListener('resize', syncAppHeight);
+		vv?.addEventListener('scroll', syncAppHeight);
+		window.addEventListener('resize', syncAppHeight);
+
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
 				if (roomContextMenu) closeRoomContextMenu();
@@ -1272,6 +1310,10 @@
 			window.removeEventListener('keydown', onKey);
 			window.removeEventListener('click', onDocClick);
 			document.removeEventListener('visibilitychange', onVisChange);
+			mq.removeEventListener('change', syncMobile);
+			vv?.removeEventListener('resize', syncAppHeight);
+			vv?.removeEventListener('scroll', syncAppHeight);
+			window.removeEventListener('resize', syncAppHeight);
 		};
 	});
 
@@ -1410,31 +1452,8 @@
 		</div>
 	</div>
 {:else}
-	<div class="flex h-screen gap-3 bg-neutral-100 p-3 dark:bg-neutral-950">
-		<aside class="flex w-64 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-white/10 dark:bg-neutral-900">
-			<button
-				type="button"
-				onclick={openPrefs}
-				aria-label="Open preferences"
-				class="group/userbtn flex items-center gap-2.5 border-b border-neutral-200 px-3 py-3 text-left hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/60"
-			>
-				<div
-					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white {avatarColor(
-						nickname
-					)}"
-					aria-hidden="true"
-				>
-					{initials(nickname)}
-				</div>
-				<div class="flex-1 truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
-					{nickname}
-				</div>
-				<Settings
-					size={16}
-					class="shrink-0 text-neutral-400 group-hover/userbtn:text-neutral-700 dark:text-neutral-500 dark:group-hover/userbtn:text-neutral-200"
-				/>
-			</button>
-
+	<div class="flex h-[var(--app-h,100dvh)] gap-3 overflow-hidden bg-neutral-100 p-3 dark:bg-neutral-950 max-md:flex-col max-md:gap-0 max-md:p-0">
+		<aside class="flex w-64 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-white/10 dark:bg-neutral-900 max-md:w-full max-md:min-h-0 max-md:flex-1 max-md:rounded-none max-md:border-0 {mobileView === 'chats' ? '' : 'max-md:hidden'}">
 			<div class="p-3">
 				<form
 					onsubmit={(e) => {
@@ -1549,29 +1568,72 @@
 					{/if}
 				{/if}
 			</div>
+
+			<button
+				type="button"
+				onclick={openPrefs}
+				aria-label="Open preferences"
+				class="group/userbtn flex items-center gap-2.5 border-t border-neutral-200 px-3 py-3.5 text-left hover:bg-neutral-50 max-md:hidden dark:border-neutral-800 dark:hover:bg-neutral-800/60"
+			>
+				<div
+					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white {avatarColor(
+						nickname
+					)}"
+					aria-hidden="true"
+				>
+					{initials(nickname)}
+				</div>
+				<div class="flex-1 truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+					{nickname}
+				</div>
+				<Settings
+					size={16}
+					class="shrink-0 text-neutral-400 group-hover/userbtn:text-neutral-700 dark:text-neutral-500 dark:group-hover/userbtn:text-neutral-200"
+				/>
+			</button>
 		</aside>
 
-		<div bind:clientWidth={paneRowWidth} class="flex min-w-0 flex-1 gap-3">
-			{#each panes as pane (pane.id)}
+		<div bind:clientWidth={paneRowWidth} class="flex min-w-0 flex-1 gap-3 max-md:min-h-0 {mobileView === 'messages' ? '' : 'max-md:hidden'}">
+			{#each visiblePanes as pane (pane.id)}
 				<ChatPane
 					roomId={pane.roomId}
 					rooms={chatQuery.data?.rooms ?? []}
 					{nickname}
 					{userId}
 					isFocused={focusedPaneId === pane.id}
-					showSplitButton
+					showSplitButton={!isMobile}
 					splitDisabled={!canSplit}
-					showCloseButton={panes.length > 1}
-					splitActive={panes.length > 1}
+					showCloseButton={!isMobile && panes.length > 1}
+					showBackButton={isMobile}
+					showUsersButton={isMobile && !!pane.roomId}
+					splitActive={visiblePanes.length > 1}
 					onFocus={() => focusPaneId(pane.id)}
 					onToggleSplit={() => addPaneAfter(pane.id)}
 					onClose={() => closePane(pane.id)}
+					onBack={() => (mobileView = lastNonMessageView)}
+					onUsersClick={() => {
+						mobileView = 'room-users';
+						sidebarTab = 'room';
+					}}
 				/>
 			{/each}
 		</div>
 
-		<aside class="flex w-64 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-white/10 dark:bg-neutral-900">
-			<div class="flex border-b border-neutral-200 dark:border-neutral-800" role="tablist">
+		<aside class="flex w-64 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-white/10 dark:bg-neutral-900 max-md:w-full max-md:min-h-0 max-md:flex-1 max-md:rounded-none max-md:border-0 {mobileView === 'people' || mobileView === 'room-users' ? '' : 'max-md:hidden'}">
+			{#if mobileView === 'room-users'}
+				<div class="hidden items-center gap-2 border-b border-neutral-200 px-3 py-2 max-md:flex dark:border-neutral-800">
+					<button
+						type="button"
+						onclick={() => (mobileView = 'messages')}
+						aria-label="Back"
+						class="-ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+					>
+						<ChevronLeft size={20} />
+					</button>
+					<span class="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">Room users</span>
+				</div>
+			{/if}
+			<div class="flex border-b border-neutral-200 max-md:hidden dark:border-neutral-800" role="tablist">
 				<button
 					type="button"
 					role="tab"
@@ -1690,13 +1752,62 @@
 				{/if}
 			</div>
 		</aside>
+
+		<nav
+			class="hidden shrink-0 border-t border-neutral-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-neutral-800 dark:bg-neutral-900 {mobileView ===
+				'messages' || mobileView === 'room-users'
+				? ''
+				: 'max-md:flex'}"
+			aria-label="Mobile navigation"
+		>
+			<button
+				type="button"
+				onclick={() => {
+					mobileView = 'chats';
+					lastNonMessageView = 'chats';
+				}}
+				aria-current={mobileView === 'chats' ? 'page' : undefined}
+				class="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium {mobileView ===
+				'chats'
+					? 'text-accent-600 dark:text-accent-400'
+					: 'text-neutral-500 dark:text-neutral-400'}"
+			>
+				<MessageCircle size={20} />
+				<span>Chats</span>
+			</button>
+			<button
+				type="button"
+				onclick={() => {
+					mobileView = 'people';
+					lastNonMessageView = 'people';
+					sidebarTab = 'all';
+				}}
+				aria-current={mobileView === 'people' ? 'page' : undefined}
+				class="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium {mobileView ===
+				'people'
+					? 'text-accent-600 dark:text-accent-400'
+					: 'text-neutral-500 dark:text-neutral-400'}"
+			>
+				<Users size={20} />
+				<span>People</span>
+			</button>
+			<button
+				type="button"
+				onclick={openPrefs}
+				aria-label="Open preferences"
+				class="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium text-neutral-500 dark:text-neutral-400"
+			>
+				<Settings size={20} />
+				<span>Settings</span>
+			</button>
+		</nav>
 	</div>
 
 	{#if prefsOpen}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<div
 			role="presentation"
-			class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
+			class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4 max-md:items-end max-md:p-0"
 			onclick={closePrefs}
 		>
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1706,10 +1817,26 @@
 				aria-modal="true"
 				aria-label="Preferences"
 				onclick={(e) => e.stopPropagation()}
-				class="flex h-[600px] max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900"
+				class="flex h-[600px] max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900 max-md:h-[85dvh] max-md:max-w-none max-md:rounded-t-2xl max-md:rounded-b-none"
 			>
-				<header class="flex items-center justify-between border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
-					<h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Preferences</h2>
+				<header class="flex items-center gap-2 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800 max-md:px-3">
+					{#if isMobile && prefsMobileView === 'detail'}
+						<button
+							type="button"
+							onclick={() => (prefsMobileView = 'menu')}
+							aria-label="Back to preferences menu"
+							class="-ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+						>
+							<ChevronLeft size={20} />
+						</button>
+					{/if}
+					<h2 class="flex-1 text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+						{#if isMobile && prefsMobileView === 'detail'}
+							{prefsTab === 'profile' ? 'Profile' : 'Appearance'}
+						{:else}
+							Preferences
+						{/if}
+					</h2>
 					<button
 						type="button"
 						onclick={closePrefs}
@@ -1720,38 +1847,48 @@
 					</button>
 				</header>
 				<div class="flex flex-1 overflow-hidden">
-					<nav class="w-48 shrink-0 border-r border-neutral-200 p-2 dark:border-neutral-800">
+					<nav class="w-48 shrink-0 border-r border-neutral-200 p-2 dark:border-neutral-800 max-md:w-full max-md:border-r-0 max-md:p-3 {prefsMobileView === 'detail' ? 'max-md:hidden' : ''}">
 						<ul class="space-y-0.5">
 							<li>
 								<button
 									type="button"
-									onclick={() => (prefsTab = 'profile')}
-									class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors {prefsTab ===
+									onclick={() => {
+										prefsTab = 'profile';
+										prefsMobileView = 'detail';
+									}}
+									class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors max-md:px-3 max-md:py-3 max-md:text-base {prefsTab ===
 									'profile'
-										? 'bg-accent-100 font-medium text-accent-700 dark:bg-accent-500/20 dark:text-accent-300'
+										? 'bg-accent-100 font-medium text-accent-700 dark:bg-accent-500/20 dark:text-accent-300 max-md:bg-transparent max-md:font-normal max-md:text-neutral-700 max-md:dark:bg-transparent max-md:dark:text-neutral-300'
 										: 'text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800'}"
 								>
-									<User size={14} />
-									Profile
+									<User size={14} class="max-md:hidden" />
+									<User size={18} class="hidden max-md:inline" />
+									<span class="flex-1">Profile</span>
+									<ChevronRight size={18} class="hidden text-neutral-400 max-md:inline dark:text-neutral-500" />
 								</button>
 							</li>
 							<li>
 								<button
 									type="button"
-									onclick={() => (prefsTab = 'appearance')}
-									class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors {prefsTab ===
+									onclick={() => {
+										prefsTab = 'appearance';
+										prefsMobileView = 'detail';
+									}}
+									class="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors max-md:px-3 max-md:py-3 max-md:text-base {prefsTab ===
 									'appearance'
-										? 'bg-accent-100 font-medium text-accent-700 dark:bg-accent-500/20 dark:text-accent-300'
+										? 'bg-accent-100 font-medium text-accent-700 dark:bg-accent-500/20 dark:text-accent-300 max-md:bg-transparent max-md:font-normal max-md:text-neutral-700 max-md:dark:bg-transparent max-md:dark:text-neutral-300'
 										: 'text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800'}"
 								>
-									<Palette size={14} />
-									Appearance
+									<Palette size={14} class="max-md:hidden" />
+									<Palette size={18} class="hidden max-md:inline" />
+									<span class="flex-1">Appearance</span>
+									<ChevronRight size={18} class="hidden text-neutral-400 max-md:inline dark:text-neutral-500" />
 								</button>
 							</li>
 						</ul>
 					</nav>
 
-					<div class="flex-1 overflow-y-auto p-6">
+					<div class="flex-1 overflow-y-auto p-6 max-md:p-4 {prefsMobileView === 'menu' ? 'max-md:hidden' : ''}">
 						{#if prefsTab === 'profile'}
 							<h3 class="mb-1 text-base font-semibold text-neutral-900 dark:text-neutral-100">
 								Profile
@@ -1759,9 +1896,9 @@
 							<p class="mb-5 text-sm text-neutral-500 dark:text-neutral-400">
 								Your nickname and avatar are shown to other people in chats.
 							</p>
-							<div class="mb-5 flex items-center gap-4">
+							<div class="mb-5 flex items-center gap-4 max-md:flex-col max-md:items-start">
 								<div
-									class="flex h-16 w-16 items-center justify-center rounded-lg text-xl font-semibold text-white {avatarColor(
+									class="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg text-xl font-semibold text-white {avatarColor(
 										profileNameInput || nickname
 									)}"
 									aria-hidden="true"
@@ -1788,7 +1925,7 @@
 									type="button"
 									onclick={saveProfile}
 									disabled={!profileNameInput.trim() || profileNameInput.trim() === nickname}
-									class="rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-accent-500 dark:hover:bg-accent-400"
+									class="rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-40 max-md:w-full max-md:py-2 dark:bg-accent-500 dark:hover:bg-accent-400"
 								>
 									Save changes
 								</button>
@@ -1808,19 +1945,19 @@
 												e.preventDefault();
 												sendUpgradeCode();
 											}}
-											class="flex gap-2"
+											class="flex gap-2 max-md:flex-col"
 										>
 											<input
 												bind:value={upgradeEmail}
 												type="email"
 												required
 												placeholder="you@example.com"
-												class="min-w-0 flex-1 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 dark:border-amber-500/30 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
+												class="min-w-0 flex-1 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 max-md:flex-none dark:border-amber-500/30 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
 											/>
 											<button
 												type="submit"
 												disabled={upgradeLoading || !upgradeEmail.trim()}
-												class="shrink-0 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-accent-500 dark:hover:bg-accent-400"
+												class="shrink-0 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 max-md:py-2 dark:bg-accent-500 dark:hover:bg-accent-400"
 											>
 												{upgradeLoading ? 'Sending…' : 'Send code'}
 											</button>
@@ -1831,7 +1968,7 @@
 												e.preventDefault();
 												verifyUpgradeCode();
 											}}
-											class="flex gap-2"
+											class="flex gap-2 max-md:flex-col"
 										>
 											<input
 												bind:value={upgradeCode}
@@ -1839,12 +1976,12 @@
 												autocomplete="one-time-code"
 												required
 												placeholder="123456"
-												class="min-w-0 flex-1 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-sm tracking-widest text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 dark:border-amber-500/30 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
+												class="min-w-0 flex-1 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-sm tracking-widest text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 max-md:flex-none dark:border-amber-500/30 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
 											/>
 											<button
 												type="submit"
 												disabled={upgradeLoading || !upgradeCode.trim()}
-												class="shrink-0 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-accent-500 dark:hover:bg-accent-400"
+												class="shrink-0 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 max-md:py-2 dark:bg-accent-500 dark:hover:bg-accent-400"
 											>
 												{upgradeLoading ? 'Verifying…' : 'Verify'}
 											</button>
@@ -1854,7 +1991,7 @@
 													upgradeSentCode = false;
 													upgradeCode = '';
 												}}
-												class="shrink-0 rounded-md px-2 py-1.5 text-xs text-amber-800 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-500/20"
+												class="shrink-0 rounded-md px-2 py-1.5 text-xs text-amber-800 hover:bg-amber-100 max-md:py-2 max-md:text-sm dark:text-amber-300 dark:hover:bg-amber-500/20"
 											>
 												Use different email
 											</button>
@@ -1867,6 +2004,16 @@
 							{/if}
 
 							<div class="mt-10 border-t border-neutral-200 pt-6 dark:border-neutral-800">
+								<button
+									type="button"
+									onclick={signOut}
+									class="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 max-md:w-full max-md:py-2 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+								>
+									Sign out
+								</button>
+							</div>
+
+							<div class="mt-6 border-t border-neutral-200 pt-6 dark:border-neutral-800">
 								<h4 class="text-sm font-semibold text-rose-700 dark:text-rose-400">Danger zone</h4>
 								<p class="mt-1 mb-3 text-xs text-neutral-500 dark:text-neutral-400">
 									Deleting your account is permanent. Your messages will stay in others' chats but show as a deleted user.
@@ -1875,7 +2022,7 @@
 									type="button"
 									onclick={deleteAccount}
 									disabled={deleteAccountLoading}
-									class="rounded-md border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10"
+									class="rounded-md border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 max-md:w-full max-md:py-2 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10"
 								>
 									{deleteAccountLoading ? 'Deleting…' : 'Delete my account'}
 								</button>
@@ -1891,14 +2038,14 @@
 							<div class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
 								Colour mode
 							</div>
-							<div class="flex gap-2">
+							<div class="flex gap-2 max-md:flex-col">
 								{#each [{ value: 'light', label: 'Light', icon: Sun }, { value: 'dark', label: 'Dark', icon: Moon }, { value: 'system', label: 'System', icon: Monitor }] as opt (opt.value)}
 									{@const isActive = theme === opt.value}
 									{@const Icon = opt.icon}
 									<button
 										type="button"
 										onclick={() => setTheme(opt.value as Theme)}
-										class="flex flex-1 items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors {isActive
+										class="flex flex-1 items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors max-md:flex-none {isActive
 											? 'border-accent-500 bg-accent-50 text-accent-700 dark:border-accent-400 dark:bg-accent-500/10 dark:text-accent-300'
 											: 'border-neutral-200 text-neutral-700 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-600'}"
 									>
@@ -1914,13 +2061,13 @@
 							<p class="mb-2 text-xs text-neutral-500 dark:text-neutral-400">
 								Choose what loads automatically. The rest will show a click-to-load preview.
 							</p>
-							<div class="mb-7 flex gap-2">
+							<div class="mb-7 flex gap-2 max-md:flex-col">
 								{#each [{ value: 'all', label: 'All media' }, { value: 'images', label: 'Images only' }, { value: 'none', label: 'Click to load' }] as opt (opt.value)}
 									{@const isActive = mediaAutoload === opt.value}
 									<button
 										type="button"
 										onclick={() => setMediaAutoload(opt.value as MediaAutoload)}
-										class="flex flex-1 items-center justify-center rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors {isActive
+										class="flex flex-1 items-center justify-center rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors max-md:flex-none {isActive
 											? 'border-accent-500 bg-accent-50 text-accent-700 dark:border-accent-400 dark:bg-accent-500/10 dark:text-accent-300'
 											: 'border-neutral-200 text-neutral-700 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-600'}"
 									>
@@ -1932,7 +2079,7 @@
 							<div class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
 								Accent colour
 							</div>
-							<div class="grid grid-cols-3 gap-2">
+							<div class="grid grid-cols-3 gap-2 max-md:grid-cols-1">
 								{#each ACCENTS as a (a.value)}
 									{@const isActive = accent === a.value}
 									<button
@@ -1970,7 +2117,7 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div
 			role="presentation"
-			class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
+			class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4 max-md:items-end max-md:p-0"
 			onclick={closeProfile}
 		>
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1980,7 +2127,7 @@
 				aria-modal="true"
 				aria-label="Profile"
 				onclick={(e) => e.stopPropagation()}
-				class="w-full max-w-sm overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900"
+				class="w-full max-w-sm overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900 max-md:max-w-none max-md:rounded-t-2xl max-md:rounded-b-none max-md:border-b-0"
 			>
 				<div class="flex items-center justify-end px-3 pt-3">
 					<button
@@ -2097,7 +2244,7 @@
 				type="button"
 				onclick={closeLightbox}
 				aria-label="Close"
-				class="absolute top-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+				class="absolute top-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 max-md:h-12 max-md:w-12"
 			>
 				<X size={18} />
 			</button>
@@ -2138,14 +2285,14 @@
 			<div
 				onclick={(e) => e.stopPropagation()}
 				role="presentation"
-				class="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/60 p-1.5 ring-1 ring-white/10 backdrop-blur-sm"
+				class="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/60 p-1.5 ring-1 ring-white/10 backdrop-blur-sm max-md:bottom-8 max-md:gap-3 max-md:p-2"
 			>
 				<button
 					type="button"
 					onclick={prevLightbox}
 					disabled={!hasPrev}
 					aria-label="Previous"
-					class="flex h-10 w-10 items-center justify-center rounded-full text-white enabled:hover:bg-white/15 disabled:opacity-30"
+					class="flex h-10 w-10 items-center justify-center rounded-full text-white enabled:hover:bg-white/15 disabled:opacity-30 max-md:h-12 max-md:w-12"
 				>
 					<ChevronLeft size={20} />
 				</button>
@@ -2153,7 +2300,7 @@
 					type="button"
 					onclick={() => downloadMedia(m.src)}
 					aria-label="Download"
-					class="flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/15"
+					class="flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/15 max-md:h-12 max-md:w-12"
 				>
 					<Download size={18} />
 				</button>
@@ -2162,7 +2309,7 @@
 					onclick={nextLightbox}
 					disabled={!hasNext}
 					aria-label="Next"
-					class="flex h-10 w-10 items-center justify-center rounded-full text-white enabled:hover:bg-white/15 disabled:opacity-30"
+					class="flex h-10 w-10 items-center justify-center rounded-full text-white enabled:hover:bg-white/15 disabled:opacity-30 max-md:h-12 max-md:w-12"
 				>
 					<ChevronRight size={20} />
 				</button>

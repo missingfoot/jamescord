@@ -1,6 +1,13 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/noto-sans';
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--font-sans: 'Noto Sans Variable', 'Noto Sans', ui-sans-serif, system-ui,
+		sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+		'Noto Color Emoji';
+}
 
 @theme inline {
 	--color-accent-50: var(--accent-50);
@@ -124,12 +131,31 @@ html,
 body {
 	background-color: var(--color-neutral-100);
 	color-scheme: light;
+	overscroll-behavior: none;
+	-webkit-tap-highlight-color: transparent;
 }
 
 html.dark,
 html.dark body {
 	background-color: var(--color-neutral-950);
 	color-scheme: dark;
+}
+
+body {
+	overflow: hidden;
+	overflow-x: hidden;
+}
+
+button,
+a,
+[role='button'] {
+	touch-action: manipulation;
+}
+
+em-emoji-picker {
+	--font-family: 'Noto Sans Variable', 'Noto Sans', ui-sans-serif, system-ui,
+		sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+		'Noto Color Emoji' !important;
 }
 
 @keyframes upload-slide {

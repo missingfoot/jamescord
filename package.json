@@ -32,7 +32,10 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@emoji-mart/data": "^1.2.1",
+		"@fontsource-variable/noto-sans": "^5.2.10",
 		"@instantdb/svelte": "^1.0.33",
-		"@lucide/svelte": "^1.16.0"
+		"@lucide/svelte": "^1.16.0",
+		"emoji-mart": "^5.6.0"
 	}
 }

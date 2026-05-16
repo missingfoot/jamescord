@@ -36,7 +36,7 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div
 		role="presentation"
-		class="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+		class="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 max-md:items-end max-md:p-0"
 		onclick={() => respond(false)}
 		transition:fade={{ duration: 120 }}
 	>
@@ -47,7 +47,7 @@
 			tabindex="-1"
 			onclick={(e) => e.stopPropagation()}
 			onkeydown={(e) => e.stopPropagation()}
-			class="w-full max-w-sm overflow-hidden rounded-2xl border border-black/5 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900"
+			class="w-full max-w-sm overflow-hidden rounded-2xl border border-black/5 bg-white shadow-xl dark:border-white/10 dark:bg-neutral-900 max-md:max-w-none max-md:rounded-t-2xl max-md:rounded-b-none max-md:border-b-0"
 			in:fly={{ y: 8, duration: 160, easing: cubicOut }}
 			out:fade={{ duration: 100 }}
 		>

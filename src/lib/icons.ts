@@ -21,6 +21,7 @@ export {
 	Trash2,
 	Reply,
 	Paperclip,
+	Smile,
 	FileVideo,
 	Loader2,
 	CornerDownRight

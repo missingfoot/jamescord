@@ -13,6 +13,9 @@
 		Trash2,
 		Reply as ReplyIcon,
 		Paperclip,
+		Smile,
+		ChevronLeft,
+		Users,
 		FileVideo,
 		ImageIcon,
 		Loader2,
@@ -83,11 +86,15 @@
 		isFocused,
 		showSplitButton = false,
 		showCloseButton = false,
+		showBackButton = false,
+		showUsersButton = false,
 		splitActive = false,
 		splitDisabled = false,
 		onFocus,
 		onToggleSplit,
-		onClose
+		onClose,
+		onBack,
+		onUsersClick
 	}: {
 		roomId: string | null;
 		rooms: Room[];
@@ -96,11 +103,15 @@
 		isFocused: boolean;
 		showSplitButton?: boolean;
 		showCloseButton?: boolean;
+		showBackButton?: boolean;
+		showUsersButton?: boolean;
 		splitActive?: boolean;
 		splitDisabled?: boolean;
 		onFocus: () => void;
 		onToggleSplit?: () => void;
 		onClose?: () => void;
+		onBack?: () => void;
+		onUsersClick?: () => void;
 	} = $props();
 
 	const openLightbox = getContext<
@@ -169,6 +180,9 @@
 
 	// --- per-pane state ---
 	let messageText = $state('');
+	let emojiPickerOpen = $state(false);
+	let emojiPickerEl: HTMLDivElement | undefined = $state();
+	let emojiButtonEl: HTMLButtonElement | undefined = $state();
 	let messageListEl: HTMLDivElement | undefined = $state();
 	let messageListInnerEl: HTMLDivElement | undefined = $state();
 	let composerEl: HTMLTextAreaElement | undefined = $state();
@@ -184,6 +198,7 @@
 	let contextMenu: { x: number; y: number; msg: Msg } | null = $state(null);
 	let editingMsgId: string | null = $state(null);
 	let editText = $state('');
+	let editTextareaEl: HTMLTextAreaElement | undefined = $state();
 	let replyingTo: Msg | null = $state(null);
 	let flashingMsgId: string | null = $state(null);
 
@@ -256,12 +271,104 @@
 		return () => ro.disconnect();
 	});
 
+	$effect(() => {
+		messageText;
+		const el = composerEl;
+		if (!el) return;
+		el.style.height = 'auto';
+		if (el.scrollHeight === 0) return;
+		const max = 220;
+		const desired = el.scrollHeight + 2;
+		el.style.height = Math.min(desired, max) + 'px';
+		el.style.overflowY = desired > max ? 'auto' : 'hidden';
+	});
+
+	$effect(() => {
+		editText;
+		const el = editTextareaEl;
+		if (!el) return;
+		el.style.height = 'auto';
+		const max = 220;
+		const desired = el.scrollHeight + 2;
+		el.style.height = Math.min(desired, max) + 'px';
+		el.style.overflowY = desired > max ? 'auto' : 'hidden';
+	});
+
+	$effect(() => {
+		if (!emojiPickerOpen || !emojiPickerEl) return;
+		const container = emojiPickerEl;
+		let pickerEl: HTMLElement | null = null;
+		let cancelled = false;
+		Promise.all([import('emoji-mart'), import('@emoji-mart/data')]).then(
+			([{ Picker }, dataMod]) => {
+				if (cancelled) return;
+				pickerEl = new Picker({
+					data: dataMod.default,
+					onEmojiSelect: (emoji: { native: string }) => {
+						insertEmoji(emoji.native);
+						emojiPickerOpen = false;
+					},
+					theme: 'auto',
+					navPosition: 'bottom',
+					previewPosition: 'none',
+					skinTonePosition: 'search',
+					autoFocus: true
+				}) as unknown as HTMLElement;
+				container.appendChild(pickerEl);
+			}
+		);
+		return () => {
+			cancelled = true;
+			pickerEl?.remove();
+		};
+	});
+
+	function insertEmoji(emoji: string) {
+		const el = composerEl;
+		if (!el) {
+			messageText = messageText + emoji;
+			return;
+		}
+		const start = el.selectionStart ?? messageText.length;
+		const end = el.selectionEnd ?? messageText.length;
+		messageText = messageText.slice(0, start) + emoji + messageText.slice(end);
+		tick().then(() => {
+			if (!composerEl) return;
+			const pos = start + emoji.length;
+			composerEl.focus();
+			composerEl.setSelectionRange(pos, pos);
+		});
+	}
+
 	// --- message grouping ---
 	function replyParent(msg: Msg) {
 		const r = msg.replyTo;
 		if (!r) return null;
 		if (Array.isArray(r)) return r[0] ?? null;
 		return r;
+	}
+
+	const EMOJI_ONLY_RE =
+		/^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|️|‍|\s)+$/u;
+	const graphemeSegmenter =
+		typeof Intl !== 'undefined' && 'Segmenter' in Intl
+			? new Intl.Segmenter('en', { granularity: 'grapheme' })
+			: null;
+
+	function emojiOnlySizeClass(text: string): string {
+		const trimmed = text.trim();
+		if (!trimmed || !EMOJI_ONLY_RE.test(trimmed)) return 'text-sm';
+		let count = 0;
+		if (graphemeSegmenter) {
+			for (const { segment } of graphemeSegmenter.segment(trimmed)) {
+				if (segment.trim()) count++;
+			}
+		} else {
+			count = Array.from(trimmed).filter((c) => c.trim()).length;
+		}
+		if (count === 0) return 'text-sm';
+		if (count <= 24) return 'text-5xl leading-tight';
+		return 'text-sm';
 	}
 
 	function firstAttachment(msg: Msg | null | undefined): Attachment | null {
@@ -536,11 +643,22 @@
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
 				if (contextMenu) closeContextMenu();
+				else if (emojiPickerOpen) emojiPickerOpen = false;
 				else if (replyingTo) replyingTo = null;
 			}
 		};
-		const onDocClick = () => {
+		const onDocClick = (e: MouseEvent) => {
 			if (contextMenu) closeContextMenu();
+			if (emojiPickerOpen) {
+				const target = e.target as Node | null;
+				if (
+					target &&
+					!emojiPickerEl?.contains(target) &&
+					!emojiButtonEl?.contains(target)
+				) {
+					emojiPickerOpen = false;
+				}
+			}
 		};
 		window.addEventListener('keydown', onKey);
 		window.addEventListener('click', onDocClick);
@@ -560,7 +678,7 @@
 <main
 	onclick={onFocus}
 	role="presentation"
-	class="flex flex-1 flex-col overflow-hidden rounded-2xl border bg-white dark:bg-neutral-900 {splitActive &&
+	class="@container flex flex-1 flex-col overflow-hidden rounded-2xl border bg-white max-md:rounded-none max-md:border-0 dark:bg-neutral-900 {splitActive &&
 	isFocused
 		? 'border-accent-400 dark:border-accent-400'
 		: 'border-neutral-200 dark:border-white/10'}"
@@ -569,6 +687,19 @@
 		class="flex shrink-0 items-center justify-between gap-2 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800"
 	>
 		<div class="flex min-w-0 flex-1 items-center gap-2 text-sm">
+			{#if showBackButton && onBack}
+				<button
+					type="button"
+					onclick={(e) => {
+						e.stopPropagation();
+						onBack();
+					}}
+					aria-label="Back"
+					class="-ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+				>
+					<ChevronLeft size={20} />
+				</button>
+			{/if}
 			{#if activeRoom}
 				{#if activeRoom.kind === 'dm'}
 					{@const other = dmOtherName(activeRoom, myAliases, userId)}
@@ -587,6 +718,19 @@
 			{/if}
 		</div>
 		<div class="flex shrink-0 items-center gap-1">
+			{#if showUsersButton && onUsersClick}
+				<button
+					type="button"
+					onclick={(e) => {
+						e.stopPropagation();
+						onUsersClick();
+					}}
+					aria-label="Show users in this room"
+					class="flex h-7 w-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+				>
+					<Users size={16} />
+				</button>
+			{/if}
 			{#if activeMessages.length && isAdmin}
 				<button
 					type="button"
@@ -665,7 +809,7 @@
 											oncontextmenu={(e) => openContextMenu(e, msg)}
 											role="presentation"
 										>
-											<div class="w-9 shrink-0">
+											<div class="w-9 shrink-0 @max-md:hidden">
 												{#if i === 0}
 													<button
 														type="button"
@@ -690,17 +834,31 @@
 											</div>
 											<div class="min-w-0 flex-1">
 												{#if i === 0}
-													<div class="flex items-baseline gap-2">
+													<div class="flex items-center gap-2 @max-md:mb-1.5 @md:items-baseline">
 														<button
 															type="button"
 															onclick={() => clickAuthor(group.author, group.authorId)}
-															class="text-sm font-semibold text-neutral-900 hover:underline dark:text-neutral-100"
+															aria-label={`Open ${group.author}'s profile`}
+															class="shrink-0 rounded-md hover:opacity-90 @md:hidden"
 														>
-															{group.author}
+															<Avatar
+																nickname={group.author}
+																userId={group.authorId}
+																size={36}
+															/>
 														</button>
-														<span class="text-xs text-neutral-400 dark:text-neutral-500">
-															{formatTime(group.startTime)}
-														</span>
+														<div class="flex min-w-0 flex-col items-start @md:contents">
+															<button
+																type="button"
+																onclick={() => clickAuthor(group.author, group.authorId)}
+																class="text-sm font-semibold text-neutral-900 hover:underline dark:text-neutral-100"
+															>
+																{group.author}
+															</button>
+															<span class="text-xs text-neutral-400 dark:text-neutral-500">
+																{formatTime(group.startTime)}
+															</span>
+														</div>
 													</div>
 												{/if}
 												{#if parent}
@@ -744,9 +902,10 @@
 												{#if isEditing}
 													<div class="mt-0.5">
 														<textarea
+															bind:this={editTextareaEl}
 															bind:value={editText}
 															onkeydown={handleEditKeydown}
-															rows="2"
+															rows="1"
 															class="w-full min-w-0 resize-none rounded-md border border-accent-400 bg-white px-2 py-1.5 text-sm text-neutral-900 outline-none focus:border-accent-500 dark:border-accent-500 dark:bg-neutral-800 dark:text-neutral-100"
 														></textarea>
 														<div class="mt-1 flex items-center gap-2 text-xs">
@@ -769,7 +928,8 @@
 													</div>
 												{:else}
 													{#if msg.text}
-														<p class="whitespace-pre-wrap break-words text-sm text-neutral-800 dark:text-neutral-200">
+														{@const sizeClass = emojiOnlySizeClass(msg.text)}
+														<p class="whitespace-pre-wrap break-words text-neutral-800 dark:text-neutral-200 {sizeClass}">
 															{msg.text}
 															{#if msg.editedAt}
 																<span class="ml-1 text-[10px] text-neutral-400 dark:text-neutral-500">(edited)</span>
@@ -777,7 +937,7 @@
 														</p>
 													{/if}
 													{#if msg.media && msg.media.length}
-														<div class="{msg.text ? 'mt-1.5' : ''} flex flex-wrap gap-2">
+														<div class="{msg.text || i === 0 ? 'mt-1.5' : ''} flex flex-wrap gap-2">
 															{#each msg.media as att (att.id)}
 																{@const isVid = attachmentIsVideo(att)}
 																{#if att.url}
@@ -853,7 +1013,7 @@
 						e.preventDefault();
 						sendMessage();
 					}}
-					class="border-t border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900"
+					class="border-t border-neutral-200 bg-white p-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-900"
 				>
 					{#if uploadError}
 						<div class="mb-2 flex items-center gap-2 rounded-md bg-rose-50 px-3 py-1.5 text-xs text-rose-600 dark:bg-rose-500/10 dark:text-rose-300">
@@ -919,6 +1079,24 @@
 							onchange={handleFileSelect}
 							class="hidden"
 						/>
+						<div class="relative shrink-0 self-end">
+							<button
+								type="button"
+								bind:this={emojiButtonEl}
+								onclick={() => (emojiPickerOpen = !emojiPickerOpen)}
+								aria-label="Insert emoji"
+								aria-expanded={emojiPickerOpen}
+								class="flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-700 dark:border-neutral-700 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+							>
+								<Smile size={16} />
+							</button>
+							{#if emojiPickerOpen}
+								<div
+									bind:this={emojiPickerEl}
+									class="absolute bottom-full left-0 z-50 mb-2 rounded-[10px] shadow-xl shadow-black/20 dark:shadow-black/60"
+								></div>
+							{/if}
+						</div>
 						<button
 							type="button"
 							onclick={() => fileInputEl?.click()}
@@ -933,7 +1111,7 @@
 							onkeydown={handleKeydown}
 							rows="1"
 							placeholder="Message {activeRoom ? (activeRoom.kind === 'dm' ? dmOtherName(activeRoom, myAliases, userId) : activeRoom.name) : ''}"
-							class="min-w-0 flex-1 resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
+							class="min-h-9 min-w-0 flex-1 resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-accent-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-accent-400"
 						></textarea>
 						<button
 							type="submit"
