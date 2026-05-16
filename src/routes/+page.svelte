@@ -455,6 +455,8 @@
 			t === 'dark' ||
 			(t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 		document.documentElement.classList.toggle('dark', isDark);
+		const tc = document.querySelector('meta[name="theme-color"]');
+		if (tc) tc.setAttribute('content', isDark ? '#0a0a0a' : '#f5f5f5');
 	}
 
 	function setTheme(t: Theme) {
@@ -849,6 +851,8 @@
 	let sidebarTab: 'all' | 'room' = $state('all');
 	let mobileView: 'chats' | 'messages' | 'people' | 'room-users' = $state('chats');
 	let lastNonMessageView: 'chats' | 'people' = $state('chats');
+	let swipeOffsetX = $state(0);
+	let swipeMode: 'wrapper' | 'lightbox' | 'modal-instant' | null = $state(null);
 	let userFilter = $state('');
 
 	const onlineNicknames = $derived(new Set(onlineUsers.map((u) => u.nickname)));
@@ -1264,6 +1268,130 @@
 		syncMobile();
 		mq.addEventListener('change', syncMobile);
 
+		let swipeStartX = 0;
+		let swipeStartY = 0;
+		let swipeStartTime = 0;
+		let swipeFromEdge = false;
+		let swipeDirectionLocked: 'h' | 'v' | null = null;
+		let swipeAnimating = false;
+
+		const animateOffset = (to: number, duration: number, then?: () => void) => {
+			const from = swipeOffsetX;
+			const start = performance.now();
+			swipeAnimating = true;
+			const step = (now: number) => {
+				const elapsed = now - start;
+				const t = Math.min(elapsed / duration, 1);
+				const eased = 1 - Math.pow(1 - t, 3);
+				swipeOffsetX = from + (to - from) * eased;
+				if (t < 1) {
+					requestAnimationFrame(step);
+				} else {
+					swipeAnimating = false;
+					then?.();
+				}
+			};
+			requestAnimationFrame(step);
+		};
+
+		const canWrapperSwipeBack = () =>
+			isMobile && (mobileView === 'messages' || mobileView === 'room-users');
+
+		const onSwipeStart = (e: TouchEvent) => {
+			if (e.touches.length !== 1) return;
+			if (swipeAnimating) return;
+			const t = e.touches[0];
+			swipeStartX = t.clientX;
+			swipeStartY = t.clientY;
+			swipeStartTime = performance.now();
+			swipeFromEdge = swipeStartX < 30;
+			swipeDirectionLocked = null;
+			swipeMode = null;
+			swipeOffsetX = 0;
+		};
+
+		const onSwipeMove = (e: TouchEvent) => {
+			if (e.touches.length !== 1 || swipeAnimating) return;
+			const t = e.touches[0];
+			const dx = t.clientX - swipeStartX;
+			const dy = t.clientY - swipeStartY;
+			if (!swipeDirectionLocked) {
+				if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+				swipeDirectionLocked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+				if (swipeDirectionLocked === 'v') return;
+				if (lightbox) {
+					swipeMode = 'lightbox';
+				} else if (swipeFromEdge && dx > 0) {
+					if (profile || prefsOpen) swipeMode = 'modal-instant';
+					else if (canWrapperSwipeBack()) swipeMode = 'wrapper';
+				}
+			}
+			if (!swipeMode || swipeMode === 'modal-instant') return;
+			if (swipeMode === 'wrapper') swipeOffsetX = Math.max(0, dx);
+			else swipeOffsetX = dx;
+		};
+
+		const onSwipeEnd = (e: TouchEvent) => {
+			if (!swipeMode) return;
+			const t = e.changedTouches[0];
+			const dx = t.clientX - swipeStartX;
+			const dt = performance.now() - swipeStartTime;
+			const velocity = dx / Math.max(dt, 1);
+			const width = window.innerWidth;
+			const threshold = width / 3;
+			const mode = swipeMode;
+			if (mode === 'modal-instant') {
+				swipeMode = null;
+				if (Math.abs(dx) >= 60 && dt < 700 && dx > 0) {
+					if (profile) closeProfile();
+					else if (prefsOpen) {
+						if (isMobile && prefsMobileView === 'detail') prefsMobileView = 'menu';
+						else closePrefs();
+					}
+				}
+				return;
+			}
+			if (mode === 'lightbox') {
+				if (Math.abs(dx) > threshold || Math.abs(velocity) > 0.5) {
+					animateOffset(dx < 0 ? -width : width, 180, () => {
+						if (dx < 0) nextLightbox();
+						else prevLightbox();
+						swipeOffsetX = 0;
+						swipeMode = null;
+					});
+				} else {
+					animateOffset(0, 180, () => (swipeMode = null));
+				}
+				return;
+			}
+			if (mode === 'wrapper') {
+				if (dx > threshold || velocity > 0.5) {
+					animateOffset(width, 200, () => {
+						if (mobileView === 'room-users') mobileView = 'messages';
+						else if (mobileView === 'messages') mobileView = lastNonMessageView;
+						swipeOffsetX = 0;
+						swipeMode = null;
+					});
+				} else {
+					animateOffset(0, 180, () => (swipeMode = null));
+				}
+			}
+		};
+
+		const onSwipeCancel = () => {
+			if (!swipeMode) return;
+			if (swipeMode === 'modal-instant') {
+				swipeMode = null;
+			} else {
+				animateOffset(0, 160, () => (swipeMode = null));
+			}
+		};
+
+		document.addEventListener('touchstart', onSwipeStart, { passive: true });
+		document.addEventListener('touchmove', onSwipeMove, { passive: true });
+		document.addEventListener('touchend', onSwipeEnd, { passive: true });
+		document.addEventListener('touchcancel', onSwipeCancel, { passive: true });
+
 		const vv = window.visualViewport;
 		const syncAppHeight = () => {
 			const h = vv ? vv.height : window.innerHeight;
@@ -1314,6 +1442,10 @@
 			vv?.removeEventListener('resize', syncAppHeight);
 			vv?.removeEventListener('scroll', syncAppHeight);
 			window.removeEventListener('resize', syncAppHeight);
+			document.removeEventListener('touchstart', onSwipeStart);
+			document.removeEventListener('touchmove', onSwipeMove);
+			document.removeEventListener('touchend', onSwipeEnd);
+			document.removeEventListener('touchcancel', onSwipeCancel);
 		};
 	});
 
@@ -1452,7 +1584,12 @@
 		</div>
 	</div>
 {:else}
-	<div class="flex h-[var(--app-h,100dvh)] gap-3 overflow-hidden bg-neutral-100 p-3 dark:bg-neutral-950 max-md:flex-col max-md:gap-0 max-md:p-0">
+	<div
+		class="flex h-[var(--app-h,100dvh)] gap-3 overflow-hidden bg-neutral-100 p-3 will-change-transform dark:bg-neutral-950 max-md:flex-col max-md:gap-0 max-md:p-0"
+		style:transform={swipeMode === 'wrapper' && swipeOffsetX !== 0
+			? `translate3d(${swipeOffsetX}px,0,0)`
+			: undefined}
+	>
 		<aside class="flex w-64 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-white/10 dark:bg-neutral-900 max-md:w-full max-md:min-h-0 max-md:flex-1 max-md:rounded-none max-md:border-0 {mobileView === 'chats' ? '' : 'max-md:hidden'}">
 			<div class="p-3">
 				<form
@@ -2257,7 +2394,10 @@
 			{#key m.id}
 				<div
 					in:fade={{ duration: 160 }}
-					class="flex max-h-[88vh] max-w-[90vw] items-center justify-center"
+					style:transform={swipeMode === 'lightbox' && swipeOffsetX !== 0
+						? `translate3d(${swipeOffsetX}px,0,0)`
+						: undefined}
+					class="flex max-h-[88vh] max-w-[90vw] items-center justify-center will-change-transform"
 				>
 					{#if m.type === 'image'}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->

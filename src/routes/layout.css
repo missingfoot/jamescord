@@ -141,9 +141,15 @@ html.dark body {
 	color-scheme: dark;
 }
 
-body {
+html {
 	overflow: hidden;
-	overflow-x: hidden;
+	height: 100%;
+}
+
+body {
+	position: fixed;
+	inset: 0;
+	overflow: hidden;
 }
 
 button,
